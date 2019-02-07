@@ -104,18 +104,13 @@ type family CompileVersion (a :: Symbol) api where
     CompileVersion a (Versions '[] :> api) =
         Exclude
     CompileVersion a (b :<|> c) =
-        EraseExclusions (CompileVersion a b :<|> CompileVersion a c)
+        CompileVersion a b :<|> CompileVersion a c
     CompileVersion a (b :> Exclude) =
         Exclude
     CompileVersion a (b :> c) =
         PropagateExclusion (b :> CompileVersion a c)
     CompileVersion a api =
         api
-
-type family EraseExclusions api where
-    EraseExclusions (Exclude :<|> a) = a
-    EraseExclusions (a :<|> Exclude) = a
-    EraseExclusions a = a
 
 type family PropagateExclusion api where
     PropagateExclusion (a :> Exclude) = Exclude
@@ -136,26 +131,24 @@ class ServerVersion api1 api2 where
 instance ServerVersion api Exclude where
     serverVersion _ _ errF _ = errF
 
-instance ServerVersion api api where
-    serverVersion _ _ _ srv = srv
-
-instance ServerVersion (api11 :<|> api12) api11 where
-    serverVersion _ _ _ (srv1 :<|> _) = srv1
-
-instance ServerVersion (api11 :<|> api12) api12 where
-    serverVersion _ _ _ (_ :<|> srv2) = srv2
-
-instance ServerVersion api12 api22 => ServerVersion (api11 :<|> api12) (api11 :<|> api22) where
-    serverVersion _ _ errF (srv1 :<|> srv2) = srv1 :<|> serverVersion api12 api22 errF srv2
-        where
-        api12 = Proxy :: Proxy api12
-        api22 = Proxy :: Proxy api22
-
-instance ServerVersion api11 api21 => ServerVersion (api11 :<|> api12) (api21 :<|> api12) where
-    serverVersion _ _ errF (srv1 :<|> srv2) = serverVersion api11 api21 errF srv1 :<|> srv2
+instance (
+    ServerVersion api11 api21,
+    ServerVersion api12 api22) => ServerVersion (api11 :<|> api12) (api21 :<|> api22) where
+    serverVersion _ _ errF (srv1 :<|> srv2) =
+        (serverVersion api11 api21 errF srv1 :<|> serverVersion api12 api22 errF srv2)
         where
         api11 = Proxy :: Proxy api11
         api21 = Proxy :: Proxy api21
+        api12 = Proxy :: Proxy api12
+        api22 = Proxy :: Proxy api22
+
+instance (
+    KnownSymbol a,
+    ServerVersion api1 api2) => ServerVersion (a :> api1) (a :> api2) where
+    serverVersion _ _ errF srv = serverVersion api1 api2 errF srv
+        where
+        api1 = Proxy :: Proxy api1
+        api2 = Proxy :: Proxy api2
 
 instance ServerVersion api1 api2 => ServerVersion (Capture c a :> api1) (Capture c a :> api2) where
     serverVersion _ _ errF srv = serverVersion api1 api2 errF . srv
@@ -175,13 +168,16 @@ instance ServerVersion api1 api2 => ServerVersion (QueryParams c a :> api1) (Que
         api1 = Proxy :: Proxy api1
         api2 = Proxy :: Proxy api2
 
-type ConcreteHeader = (Header' '[Optional, Strict] :: Symbol -> * -> *)
-
 instance ServerVersion api1 api2 => ServerVersion (ConcreteHeader c a :> api1) (ConcreteHeader c a :> api2) where
     serverVersion _ _ errF srv = serverVersion api1 api2 errF . srv
         where
         api1 = Proxy :: Proxy api1
         api2 = Proxy :: Proxy api2
+
+instance ServerVersion (Verb a b c d) (Verb a b c d) where
+    serverVersion _ _ _ srv = srv
+
+type ConcreteHeader = (Header' '[Optional, Strict] :: Symbol -> * -> *)
 
 --
 --
